@@ -17,3 +17,12 @@ An AI-powered, hyperlocal Air Quality Monitoring system featuring a real-time di
 1. **Backend**: `cd backend` -> `pip install -r requirements.txt` -> `python app.py`
 2. **IoT Controller**: `cd backend` -> `python iot_server.py` (Runs on port 5001)
 3. **Frontend**: `cd frontend` -> `npm install` -> `npm run dev`
+
+
+## 📂 External Data & Model
+The trained Machine Learning model and the processed dataset are too large for GitHub. 
+Please download them from the link below and place them in their respective folders:
+
+* **[Download Link (Google Drive)]**: Paste your shared link here
+* **`aqi_model.pkl`** -> Place in `backend/models/`
+* **`processed_aqi_data.csv`** -> Place in main project folder
