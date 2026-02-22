@@ -1,0 +1,19 @@
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Python
+backend/__pycache__/
+backend/*.pyc
+backend/venv/
+backend/env/
+
+# Database (Optional: remove if you want to upload your test data)
+backend/*.db
+
+# OS Files
+.DS_Store*.pkl
+
+
+*.pkl
+*.csv
