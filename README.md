@@ -23,6 +23,6 @@ An AI-powered, hyperlocal Air Quality Monitoring system featuring a real-time di
 The trained Machine Learning model and the processed dataset are too large for GitHub. 
 Please download them from the link below and place them in their respective folders:
 
-* **[Download Link (Google Drive)]**: Paste your shared link here
+* **[[Download Link (Google Drive)]](https://drive.google.com/drive/folders/1w_Vuk2PwSYWZSYVMYWP6gmXBdoeb3IaX?usp=sharing)**: Paste your shared link here
 * **`aqi_model.pkl`** -> Place in `backend/models/`
 * **`processed_aqi_data.csv`** -> Place in main project folder
