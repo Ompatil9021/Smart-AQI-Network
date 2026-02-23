@@ -37,7 +37,7 @@ const App = () => {
 
   // Check if it's the user's first time visiting
   useEffect(() => {
-    const hasSetup = localStorage.getItem('yukti_setup_done');
+    const hasSetup = localStorage.getItem('AQI SmartGuard');
     if (!hasSetup) {
       // Small delay so the map loads in the background before blurring
       setTimeout(() => setShowOnboarding(true), 1000); 
