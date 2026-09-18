@@ -1,106 +1,88 @@
-import os
-import sqlite3
-import pickle
-import pandas as pd
-from flask import Flask, jsonify
+import logging
+from urllib.parse import unquote
+
+from flask import Flask, jsonify, request
 from flask_cors import CORS
+
+from city_service import get_city_data, get_leaderboard, get_map_cities, start_warmup
+from db import init_db
+from ml_models import load_models
+from providers import search_cities, fetch_hourly_aqi, geocode_city
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)
 
-DB_FILE = 'delhi_aqi.db'
-# Make sure your new 0.98 accuracy files are in this 'models' folder!
-MODEL_PATH = os.path.join('models', 'aqi_model.pkl')
-COLS_PATH = os.path.join('models', 'model_columns.pkl')
 
-model = None
-model_columns = []
+@app.get("/api/health")
+def health():
+    return jsonify({"ok": True, "service": "smart-aqi-network"})
 
-# ==========================================
-# 1. LOAD ML MODEL
-# ==========================================
-def load_model():
-    global model, model_columns
+
+@app.get("/api/search")
+def search():
+    query = (request.args.get("q") or "").strip()
+    return jsonify({"results": search_cities(query)})
+
+
+@app.get("/api/city/<path:city_name>")
+def city(city_name: str):
+    name = unquote(city_name).strip()
+    if not name:
+        return jsonify({"error": "City name is required"}), 400
+    data = get_city_data(name)
+    if not data:
+        return jsonify({"error": f'City "{name}" not found or air-quality APIs are unavailable'}), 404
+
+    return jsonify(
+        {
+            "city": data["city"],
+            "current_aqi": data["current_aqi"],
+            "forecast": data.get("forecast") or {"6h": None, "24h": None, "48h": None},
+            "pollutants": data.get("pollutants") or {},
+            "category": data.get("category"),
+            "color": data.get("color"),
+            "lat": data.get("lat"),
+            "lon": data.get("lon"),
+            "weather": data.get("weather"),
+            "geojson": data.get("geojson"),
+            "source": data.get("source"),
+            "stale": data.get("stale", False),
+            "updated_at": data.get("updated_at"),
+        }
+    )
+
+
+@app.get("/api/leaderboard")
+def leaderboard():
+    return jsonify({"cities": get_leaderboard()})
+
+
+@app.get("/api/map")
+def map_cities():
+    return jsonify({"cities": get_map_cities()})
+
+
+@app.get("/api/city/<path:city_name>/history")
+def city_history(city_name: str):
+    name = unquote(city_name).strip()
+    if not name:
+        return jsonify({"error": "City name is required"}), 400
+    geo = geocode_city(name)
+    if not geo:
+        return jsonify({"error": f'City "{name}" not found'}), 404
     try:
-        with open(MODEL_PATH, 'rb') as f:
-            model = pickle.load(f)
-        with open(COLS_PATH, 'rb') as f:
-            model_columns = pickle.load(f)
-        print("✅ High-Accuracy ML Engine Loaded Successfully!")
-    except Exception as e:
-        print(f"❌ Error loading model: {e}")
+        hourly = fetch_hourly_aqi(geo["lat"], geo["lon"], hours=24)
+        return jsonify({"city": geo["name"], "hourly": hourly})
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
 
-def get_db_connection():
-    conn = sqlite3.connect(DB_FILE)
-    conn.row_factory = sqlite3.Row
-    return conn
 
-# ==========================================
-# 2. MAP ENDPOINT (Macro Level - Areas)
-# ==========================================
-@app.route('/api/areas', methods=['GET'])
-def get_areas():
-    """Returns all Delhi areas and their average AQI for the Map"""
-    conn = get_db_connection()
-    areas = conn.execute('SELECT * FROM areas').fetchall()
-    conn.close()
-    return jsonify([dict(ix) for ix in areas])
-
-# ==========================================
-# 3. STREET ENDPOINT + ML PREDICTION (Micro Level)
-# ==========================================
-@app.route('/api/street/<string:street_name>', methods=['GET'])
-def get_street(street_name):
-    """Searches for a street, gets live data, and predicts future AQI"""
-    conn = get_db_connection()
-    # Case-insensitive search using LIKE
-    street = conn.execute('SELECT * FROM streets WHERE name LIKE ?', (f'%{street_name}%',)).fetchone()
-    conn.close()
-    
-    if not street:
-        return jsonify({'error': 'Street not found'}), 404
-        
-    street_data = dict(street)
-    
-    # Run ML Prediction for this specific street using the New 0.98 R2 Model
-    if model and model_columns:
-        try:
-            # Construct input matching the exact 7 features the new model expects
-            input_data = {
-                'pm25': street_data['pm2_5'],
-                'pm10': street_data['pm10'],
-                'no2': 25.0,  # Baseline approximation
-                'so2': 10.0,  # Baseline approximation
-                'o3': 30.0,   # Baseline approximation
-                'co': 1.0,    # Baseline approximation
-                'aqi': street_data['aqi']
-            }
-            
-            # Format for Scikit-Learn
-            input_df = pd.DataFrame([input_data])
-            final_input = pd.DataFrame()
-            
-            # Ensure columns are in the exact order the model was trained on
-            for col in model_columns:
-                final_input[col] = input_df.get(col, 0)
-                
-            # Execute Prediction
-            pred = model.predict(final_input)[0] 
-            
-            street_data['forecast'] = {
-                '6h': int(round(pred[0])),
-                '24h': int(round(pred[1])),
-                '48h': int(round(pred[2]))
-            }
-        except Exception as e:
-            print(f"ML Prediction Error: {e}")
-            street_data['forecast'] = None
-    else:
-        street_data['forecast'] = None
-
-    return jsonify(street_data)
-
-if __name__ == '__main__':
-    load_model()
-    print("🚀 Main API Engine running on http://localhost:5000")
-    app.run(port=5000, debug=True)
+if __name__ == "__main__":
+    init_db()
+    load_models()
+    start_warmup()
+    logger.info("API running on http://localhost:5000")
+    app.run(port=5000, debug=True, use_reloader=False)

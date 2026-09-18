@@ -1,28 +1,26 @@
-# 🌍 Yukti Smart City AQI Network
+# Smart AQI Network
 
-An AI-powered, hyperlocal Air Quality Monitoring system featuring a real-time digital twin map, IoT sensor simulation, and advanced Machine Learning forecasting.
+City-level air quality dashboard using live Open-Meteo air/weather data, OpenStreetMap city boundaries, and XGBoost 6h / 24h / 48h forecasts.
 
-## 🚀 Features
-* **Live Digital Twin Map**: Built with React and Leaflet, displaying a dark-mode command center of Delhi's active sensor zones.
-* **IoT God Mode**: A Flask-based simulation panel to manually trigger AQI spikes, simulate power cuts, and test real-time system responses.
-* **AI Forecasting (0.98 R²)**: Uses a heavily tuned Random Forest Regressor trained on 2019-2024 Delhi NCR data to predict 6h, 24h, and 48h pollution trends.
-* **Smart Emergency Alerts**: Browser push notifications that instantly warn users when local sensors cross hazardous thresholds.
+## Stack
+- **Frontend**: React, Leaflet, Recharts, Tailwind
+- **Backend**: Flask, SQLite cache, XGBoost
+- **Live data**: Open-Meteo Air Quality + Weather (free, no API key). City outlines from Nominatim, cached locally.
 
-## 🛠️ Tech Stack
-* **Frontend**: React.js, Tailwind CSS, Recharts, Leaflet
-* **Backend**: Python, Flask, SQLite
-* **Machine Learning**: Scikit-Learn, Pandas, Numpy
+The previous IoT / digital-twin simulator is no longer used by the dashboard.
 
-## ⚡ How to Run
-1. **Backend**: `cd backend` -> `pip install -r requirements.txt` -> `python app.py`
-2. **IoT Controller**: `cd backend` -> `python iot_server.py` (Runs on port 5001)
-3. **Frontend**: `cd frontend` -> `npm install` -> `npm run dev`
+## Run
+1. Backend: `cd backend` → `pip install -r requirements.txt` → `python app.py`
+2. Frontend: `cd frontend` → `npm install` → `npm run dev`
 
+API: `http://localhost:5000`  
+UI: `http://localhost:5173`
 
-## 📂 External Data & Model
-The trained Machine Learning model and the processed dataset are too large for GitHub. 
-Please download them from the link below and place them in their respective folders:
+## API
+- `GET /api/city/<city_name>` — current AQI, pollutants, 6h/24h/48h forecast, city polygon
+- `GET /api/search?q=` — city autocomplete
+- `GET /api/map` — tracked Indian cities with AQI-colored polygons
+- `GET /api/leaderboard` — cities sorted by AQI
+- `GET /api/health`
 
-* **[[Download Link (Google Drive)]](https://drive.google.com/drive/folders/1w_Vuk2PwSYWZSYVMYWP6gmXBdoeb3IaX?usp=sharing)**
-* **`aqi_model.pkl`** -> Place in `backend/models/`
-* **`processed_aqi_data.csv`** -> Place in main project folder
+Live results are cached ~90 seconds. If Open-Meteo is unreachable, the last stored city payload is returned.
