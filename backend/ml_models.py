@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Optional
 
 import pandas as pd
-from xgboost import XGBRegressor
+import xgboost as xgb
 
 from aqi_calc import clamp_aqi
 from config import MODEL_PATHS
@@ -25,15 +25,18 @@ FEATURE_COLUMNS = [
     "month",
 ]
 
-_models: dict[str, Optional[XGBRegressor]] = {"6h": None, "24h": None, "48h": None}
+_models: dict[str, Optional[xgb.Booster]] = {"6h": None, "24h": None, "48h": None}
 
 
 def load_models() -> None:
     for horizon, path in MODEL_PATHS.items():
-        model = XGBRegressor()
-        model.load_model(path)
-        _models[horizon] = model
-    logger.info("XGBoost 6h/24h/48h models loaded")
+        try:
+            model = xgb.Booster()
+            model.load_model(path)
+            _models[horizon] = model
+        except Exception as err:
+            logger.error("Failed to load model %s from %s: %s", horizon, path, err)
+    logger.info("XGBoost 6h/24h/48h Booster models loaded successfully")
 
 
 def _num(value, default: float) -> float:
@@ -68,12 +71,18 @@ def predict_forecast(pollutants: dict, weather: dict) -> dict:
     if _models["6h"] is None or _models["24h"] is None or _models["48h"] is None:
         load_models()
     features = build_features(pollutants, weather)
+    dmatrix = xgb.DMatrix(features)
     out = {}
     for horizon in ("6h", "24h", "48h"):
         model = _models.get(horizon)
         if model is None:
             out[horizon] = None
             continue
-        pred = model.predict(features)[0]
-        out[horizon] = clamp_aqi(pred)
+        try:
+            pred = model.predict(dmatrix)[0]
+            out[horizon] = clamp_aqi(float(pred))
+        except Exception as err:
+            logger.error("Prediction error for horizon %s: %s", horizon, err)
+            out[horizon] = None
     return out
+
