@@ -1,4 +1,9 @@
-const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:5000/api';
+let rawUrl = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:5000/api').trim().replace(/\/+$/, '');
+if (!rawUrl.endsWith('/api')) {
+  rawUrl += '/api';
+}
+const API_URL = rawUrl;
+
 
 export async function fetchCity(cityName) {
   const res = await fetch(`${API_URL}/city/${encodeURIComponent(cityName)}`);

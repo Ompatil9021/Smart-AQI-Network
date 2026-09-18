@@ -16,6 +16,20 @@ app = Flask(__name__)
 CORS(app)
 
 
+# Initialize DB, ML models, and cache warmup for Gunicorn / Render production server
+try:
+    init_db()
+    load_models()
+    start_warmup()
+except Exception as _e:
+    logger.warning("Startup initialization error: %s", _e)
+
+
+@app.get("/")
+def index():
+    return jsonify({"ok": True, "service": "smart-aqi-network", "docs": "/api/health"})
+
+
 @app.get("/api/health")
 def health():
     return jsonify({"ok": True, "service": "smart-aqi-network"})
@@ -81,8 +95,6 @@ def city_history(city_name: str):
 
 
 if __name__ == "__main__":
-    init_db()
-    load_models()
-    start_warmup()
     logger.info("API running on http://localhost:5000")
     app.run(port=5000, debug=True, use_reloader=False)
+
