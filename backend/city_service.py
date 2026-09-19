@@ -118,11 +118,12 @@ def get_city_data(city_name: str, use_cache: bool = True) -> dict | None:
 
     try:
         with ThreadPoolExecutor(max_workers=2) as pool:
-            air_f = pool.submit(fetch_air_quality, geo["lat"], geo["lon"])
+            air_f = pool.submit(fetch_air_quality, geo["lat"], geo["lon"], geo["name"])
             wx_f = pool.submit(fetch_weather, geo["lat"], geo["lon"])
             pollutants = air_f.result()
             weather = wx_f.result()
-        payload = _assemble(geo["name"], geo["lat"], geo["lon"], pollutants, weather, "open-meteo")
+        payload = _assemble(geo["name"], geo["lat"], geo["lon"], pollutants, weather, pollutants.get("source", "open-meteo"))
+
         cache_put(
             "aqi_cache",
             key,

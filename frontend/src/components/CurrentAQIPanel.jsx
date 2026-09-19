@@ -47,7 +47,7 @@ export default function CurrentAQIPanel({ city }) {
               className="flex items-center gap-1.5 rounded-full border border-slate-700/80 bg-slate-800/70 px-3 py-1 text-[11px] font-medium text-slate-300 shadow-inner"
             >
               <span className={`h-2 w-2 rounded-full ${city.stale ? 'bg-amber-400' : 'bg-emerald-400 animate-pulse'}`} />
-              {city.stale ? 'Cached Fallback' : 'Live Open-Meteo'}
+              {city.stale ? 'Cached Fallback' : city.source === 'waqi-cpcb' ? 'Live CPCB Station' : 'Live Open-Meteo'}
             </span>
           </div>
         </div>

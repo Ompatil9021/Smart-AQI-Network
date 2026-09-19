@@ -24,6 +24,9 @@ OPEN_METEO_GEOCODE = "https://geocoding-api.open-meteo.com/v1/search"
 OPEN_METEO_AIR = "https://air-quality-api.open-meteo.com/v1/air-quality"
 OPEN_METEO_WEATHER = "https://api.open-meteo.com/v1/forecast"
 NOMINATIM_SEARCH = "https://nominatim.openstreetmap.org/search"
+WAQI_TOKEN = os.getenv("WAQI_TOKEN", "6e7feeda7aa2c3c62d5cdd64d74d4a1e2b2c60cf")
+WAQI_FEED_URL = "https://api.waqi.info/feed"
+
 
 CITY_ALIASES = {
     "bangalore": "Bengaluru",

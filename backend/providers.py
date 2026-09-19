@@ -18,6 +18,8 @@ from config import (
     OPEN_METEO_WEATHER,
     REQUEST_TIMEOUT,
     USER_AGENT,
+    WAQI_FEED_URL,
+    WAQI_TOKEN,
 )
 from db import cache_get, cache_put
 
@@ -173,43 +175,135 @@ def search_cities(query: str, limit: int = 6) -> list[dict]:
         return []
 
 
-def fetch_air_quality(lat: float, lon: float) -> dict:
-    res = _session.get(
-        OPEN_METEO_AIR,
-        params={
-            "latitude": lat,
-            "longitude": lon,
-            "current": "pm10,pm2_5,carbon_monoxide,nitrogen_dioxide,sulphur_dioxide,ozone,us_aqi,european_aqi",
-            "timezone": "auto",
-        },
-        timeout=REQUEST_TIMEOUT,
-    )
-    res.raise_for_status()
-    data = res.json()
-    current = _extract_current(
-        data,
-        [
-            "pm10",
-            "pm2_5",
-            "carbon_monoxide",
-            "nitrogen_dioxide",
-            "sulphur_dioxide",
-            "ozone",
-            "us_aqi",
-            "european_aqi",
-        ],
-    )
+def fetch_waqi_ground_aqi(lat: float, lon: float, city_name: str = "") -> Optional[dict]:
+    """Fetch real-time CPCB ground station air quality from WAQI API."""
+    if not WAQI_TOKEN:
+        return None
+
+    urls = []
+    if city_name:
+        clean_name = normalize_city_name(city_name).lower()
+        urls.append(f"{WAQI_FEED_URL}/{clean_name}/?token={WAQI_TOKEN}")
+    urls.append(f"{WAQI_FEED_URL}/geo:{lat};{lon}/?token={WAQI_TOKEN}")
+
+    for url in urls:
+        try:
+            res = _session.get(url, timeout=REQUEST_TIMEOUT)
+            if res.status_code != 200:
+                continue
+            data = res.json()
+            if data.get("status") != "ok" or not isinstance(data.get("data"), dict):
+                continue
+
+            station_data = data["data"]
+            aqi_val = station_data.get("aqi")
+            if aqi_val is None or aqi_val == "-" or not isinstance(aqi_val, (int, float)):
+                continue
+
+            iaqi = station_data.get("iaqi") or {}
+
+            def get_v(key: str) -> Optional[float]:
+                item = iaqi.get(key)
+                if isinstance(item, dict) and "v" in item:
+                    try:
+                        return float(item["v"])
+                    except (TypeError, ValueError):
+                        return None
+                return None
+
+            pm2_5 = get_v("pm25")
+            pm10 = get_v("pm10")
+            co = get_v("co")
+            if co is not None and co < 100:
+                co = co * 1000.0  # Convert mg/m³ to µg/m³ if needed
+
+            no2 = get_v("no2")
+            so2 = get_v("so2")
+            o3 = get_v("o3")
+            station_name = (station_data.get("city") or {}).get("name") or city_name
+
+            return {
+                "pm2_5": pm2_5,
+                "pm10": pm10,
+                "co": co,
+                "no2": no2,
+                "so2": so2,
+                "o3": o3,
+                "us_aqi": int(aqi_val),
+                "european_aqi": None,
+                "station_name": station_name,
+                "observed_at": (station_data.get("time") or {}).get("s"),
+                "source": "waqi-cpcb",
+            }
+        except Exception as exc:
+            logger.debug("WAQI fetch failed for url %s: %s", url, exc)
+            continue
+
+    return None
+
+
+def fetch_air_quality(lat: float, lon: float, city_name: str = "") -> dict:
+    waqi_data = fetch_waqi_ground_aqi(lat, lon, city_name)
+
+    open_meteo_data = {}
+    try:
+        res = _session.get(
+            OPEN_METEO_AIR,
+            params={
+                "latitude": lat,
+                "longitude": lon,
+                "current": "pm10,pm2_5,carbon_monoxide,nitrogen_dioxide,sulphur_dioxide,ozone,us_aqi,european_aqi",
+                "timezone": "auto",
+            },
+            timeout=REQUEST_TIMEOUT,
+        )
+        if res.status_code == 200:
+            data = res.json()
+            open_meteo_data = _extract_current(
+                data,
+                [
+                    "pm10",
+                    "pm2_5",
+                    "carbon_monoxide",
+                    "nitrogen_dioxide",
+                    "sulphur_dioxide",
+                    "ozone",
+                    "us_aqi",
+                    "european_aqi",
+                ],
+            )
+            open_meteo_data["observed_at"] = (data.get("current") or {}).get("time")
+    except Exception as exc:
+        logger.warning("Open-Meteo air fetch failed: %s", exc)
+
+    if waqi_data:
+        return {
+            "pm2_5": waqi_data["pm2_5"] if waqi_data["pm2_5"] is not None else open_meteo_data.get("pm2_5"),
+            "pm10": waqi_data["pm10"] if waqi_data["pm10"] is not None else open_meteo_data.get("pm10"),
+            "co": waqi_data["co"] if waqi_data["co"] is not None else open_meteo_data.get("carbon_monoxide"),
+            "no2": waqi_data["no2"] if waqi_data["no2"] is not None else open_meteo_data.get("nitrogen_dioxide"),
+            "so2": waqi_data["so2"] if waqi_data["so2"] is not None else open_meteo_data.get("sulphur_dioxide"),
+            "o3": waqi_data["o3"] if waqi_data["o3"] is not None else open_meteo_data.get("ozone"),
+            "us_aqi": waqi_data["us_aqi"] if waqi_data["us_aqi"] is not None else open_meteo_data.get("us_aqi"),
+            "european_aqi": open_meteo_data.get("european_aqi"),
+            "station_name": waqi_data.get("station_name"),
+            "observed_at": waqi_data["observed_at"] or open_meteo_data.get("observed_at"),
+            "source": "waqi-cpcb",
+        }
+
     return {
-        "pm2_5": current.get("pm2_5"),
-        "pm10": current.get("pm10"),
-        "co": current.get("carbon_monoxide"),
-        "no2": current.get("nitrogen_dioxide"),
-        "so2": current.get("sulphur_dioxide"),
-        "o3": current.get("ozone"),
-        "us_aqi": current.get("us_aqi"),
-        "european_aqi": current.get("european_aqi"),
-        "observed_at": (data.get("current") or {}).get("time"),
+        "pm2_5": open_meteo_data.get("pm2_5"),
+        "pm10": open_meteo_data.get("pm10"),
+        "co": open_meteo_data.get("carbon_monoxide"),
+        "no2": open_meteo_data.get("nitrogen_dioxide"),
+        "so2": open_meteo_data.get("sulphur_dioxide"),
+        "o3": open_meteo_data.get("ozone"),
+        "us_aqi": open_meteo_data.get("us_aqi"),
+        "european_aqi": open_meteo_data.get("european_aqi"),
+        "observed_at": open_meteo_data.get("observed_at"),
+        "source": "open-meteo",
     }
+
 
 
 def fetch_weather(lat: float, lon: float) -> dict:
