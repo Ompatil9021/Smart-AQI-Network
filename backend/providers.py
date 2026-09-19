@@ -21,6 +21,7 @@ from config import (
     WAQI_FEED_URL,
     WAQI_TOKEN,
 )
+from aqi_calc import compute_cpcb_aqi
 from db import cache_get, cache_put
 
 logger = logging.getLogger(__name__)
@@ -489,16 +490,22 @@ def schedule_polygon_refresh(name: str, lat: float, lon: float) -> None:
     threading.Thread(target=_run, daemon=True, name=f"osm-{key}").start()
 
 
+def _hourly_at(series: list, index: int):
+    if index < 0 or index >= len(series):
+        return None
+    return series[index]
+
+
 def fetch_openmeteo_forecast(lat: float, lon: float) -> dict:
-    """Fetch genuine +6h/+24h/+48h US AQI forecast from Open-Meteo CAMS model."""
+    """Fetch +6h/+24h/+48h forecast and convert to CPCB AQI (same scale as current_aqi)."""
     try:
         res = _session.get(
             OPEN_METEO_AIR,
             params={
                 "latitude": lat,
                 "longitude": lon,
-                "current": "us_aqi",
-                "hourly": "us_aqi",
+                "current": "pm10,pm2_5,carbon_monoxide,nitrogen_dioxide,sulphur_dioxide,ozone",
+                "hourly": "pm10,pm2_5,carbon_monoxide,nitrogen_dioxide,sulphur_dioxide,ozone",
                 "past_hours": 1,
                 "forecast_hours": 50,
                 "timezone": "auto",
@@ -509,11 +516,15 @@ def fetch_openmeteo_forecast(lat: float, lon: float) -> dict:
         data = res.json()
         hourly = data.get("hourly") or {}
         times = hourly.get("time") or []
-        aqi_vals = hourly.get("us_aqi") or []
+        pm25_vals = hourly.get("pm2_5") or []
+        pm10_vals = hourly.get("pm10") or []
+        co_vals = hourly.get("carbon_monoxide") or []
+        no2_vals = hourly.get("nitrogen_dioxide") or []
+        so2_vals = hourly.get("sulphur_dioxide") or []
+        o3_vals = hourly.get("ozone") or []
 
-        # Find the index of the current hour
         current_time_str = (data.get("current") or {}).get("time", "")
-        current_hour = current_time_str[:13]  # e.g. "2026-09-19T17"
+        current_hour = current_time_str[:13]
         current_idx = 0
         for i, t in enumerate(times):
             if t[:13] >= current_hour:
@@ -524,13 +535,20 @@ def fetch_openmeteo_forecast(lat: float, lon: float) -> dict:
         targets = {"6h": 6, "24h": 24, "48h": 48}
         for label, offset in targets.items():
             idx = current_idx + offset
-            for search in range(idx, min(idx + 2, len(aqi_vals))):
-                val = aqi_vals[search] if search < len(aqi_vals) else None
-                if val is not None:
-                    try:
-                        forecast[label] = max(0, int(round(float(val))))
-                    except (TypeError, ValueError):
-                        pass
+            for search in range(idx, min(idx + 2, len(times))):
+                pollutants = {
+                    "pm2_5": _hourly_at(pm25_vals, search),
+                    "pm10": _hourly_at(pm10_vals, search),
+                    "co": _hourly_at(co_vals, search),
+                    "no2": _hourly_at(no2_vals, search),
+                    "so2": _hourly_at(so2_vals, search),
+                    "o3": _hourly_at(o3_vals, search),
+                }
+                if all(v is None for v in pollutants.values()):
+                    continue
+                aqi = compute_cpcb_aqi(pollutants)
+                if aqi > 0:
+                    forecast[label] = aqi
                     break
         return forecast
     except Exception as exc:

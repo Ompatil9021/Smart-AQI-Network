@@ -68,11 +68,11 @@ def _assemble(city_name: str, lat: float, lon: float, pollutants: dict, weather:
         if current_aqi == 0 and pollutants.get("us_aqi"):
             current_aqi = int(round(float(pollutants["us_aqi"])))
 
-    # Use Open-Meteo's real CAMS atmospheric forecast (primary)
-    # Fall back to XGBoost ML model if real forecast fails
-    forecast = fetch_openmeteo_forecast(lat, lon)
+    # Primary: retrained XGBoost models (CPCB AQI, same scale as current_aqi).
+    # Fallback: Open-Meteo CAMS converted to CPCB if a model file failed to load.
+    forecast = predict_forecast(clean_pollutants, weather or {}, current_aqi)
     if not any(v is not None for v in forecast.values()):
-        forecast = predict_forecast(clean_pollutants, weather or {})
+        forecast = fetch_openmeteo_forecast(lat, lon)
 
     geojson = get_cached_polygon(city_name, lat, lon)
     schedule_polygon_refresh(city_name, lat, lon)
