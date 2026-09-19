@@ -13,6 +13,7 @@ from ml_models import predict_forecast
 from providers import (
     city_key,
     fetch_air_quality,
+    fetch_openmeteo_forecast,
     fetch_weather,
     geocode_city,
     get_cached_polygon,
@@ -67,7 +68,12 @@ def _assemble(city_name: str, lat: float, lon: float, pollutants: dict, weather:
         if current_aqi == 0 and pollutants.get("us_aqi"):
             current_aqi = int(round(float(pollutants["us_aqi"])))
 
-    forecast = predict_forecast(clean_pollutants, weather or {})
+    # Use Open-Meteo's real CAMS atmospheric forecast (primary)
+    # Fall back to XGBoost ML model if real forecast fails
+    forecast = fetch_openmeteo_forecast(lat, lon)
+    if not any(v is not None for v in forecast.values()):
+        forecast = predict_forecast(clean_pollutants, weather or {})
+
     geojson = get_cached_polygon(city_name, lat, lon)
     schedule_polygon_refresh(city_name, lat, lon)
 

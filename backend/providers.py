@@ -489,6 +489,56 @@ def schedule_polygon_refresh(name: str, lat: float, lon: float) -> None:
     threading.Thread(target=_run, daemon=True, name=f"osm-{key}").start()
 
 
+def fetch_openmeteo_forecast(lat: float, lon: float) -> dict:
+    """Fetch genuine +6h/+24h/+48h US AQI forecast from Open-Meteo CAMS model."""
+    try:
+        res = _session.get(
+            OPEN_METEO_AIR,
+            params={
+                "latitude": lat,
+                "longitude": lon,
+                "current": "us_aqi",
+                "hourly": "us_aqi",
+                "past_hours": 1,
+                "forecast_hours": 50,
+                "timezone": "auto",
+            },
+            timeout=REQUEST_TIMEOUT,
+        )
+        res.raise_for_status()
+        data = res.json()
+        hourly = data.get("hourly") or {}
+        times = hourly.get("time") or []
+        aqi_vals = hourly.get("us_aqi") or []
+
+        # Find the index of the current hour
+        current_time_str = (data.get("current") or {}).get("time", "")
+        current_hour = current_time_str[:13]  # e.g. "2026-09-19T17"
+        current_idx = 0
+        for i, t in enumerate(times):
+            if t[:13] >= current_hour:
+                current_idx = i
+                break
+
+        forecast: dict[str, int | None] = {"6h": None, "24h": None, "48h": None}
+        targets = {"6h": 6, "24h": 24, "48h": 48}
+        for label, offset in targets.items():
+            idx = current_idx + offset
+            for search in range(idx, min(idx + 2, len(aqi_vals))):
+                val = aqi_vals[search] if search < len(aqi_vals) else None
+                if val is not None:
+                    try:
+                        forecast[label] = max(0, int(round(float(val))))
+                    except (TypeError, ValueError):
+                        pass
+                    break
+        return forecast
+    except Exception as exc:
+        logger.warning("Open-Meteo forecast fetch failed: %s", exc)
+        return {"6h": None, "24h": None, "48h": None}
+
+
+
 def fetch_hourly_aqi(lat: float, lon: float, hours: int = 24) -> list[dict]:
     """Fetch real hourly AQI observations from Open-Meteo for the past N hours exactly up to current."""
     res = _session.get(
