@@ -60,9 +60,12 @@ def _assemble(city_name: str, lat: float, lon: float, pollutants: dict, weather:
         "no2": _round_pollutant(pollutants.get("no2")),
         "o3": _round_pollutant(pollutants.get("o3")),
     }
-    current_aqi = compute_cpcb_aqi(clean_pollutants)
-    if current_aqi == 0 and pollutants.get("us_aqi"):
+    if source == "waqi-cpcb" and pollutants.get("us_aqi") is not None:
         current_aqi = int(round(float(pollutants["us_aqi"])))
+    else:
+        current_aqi = compute_cpcb_aqi(clean_pollutants)
+        if current_aqi == 0 and pollutants.get("us_aqi"):
+            current_aqi = int(round(float(pollutants["us_aqi"])))
 
     forecast = predict_forecast(clean_pollutants, weather or {})
     geojson = get_cached_polygon(city_name, lat, lon)

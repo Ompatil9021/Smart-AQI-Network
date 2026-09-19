@@ -278,12 +278,12 @@ def fetch_air_quality(lat: float, lon: float, city_name: str = "") -> dict:
 
     if waqi_data:
         return {
-            "pm2_5": waqi_data["pm2_5"] if waqi_data["pm2_5"] is not None else open_meteo_data.get("pm2_5"),
-            "pm10": waqi_data["pm10"] if waqi_data["pm10"] is not None else open_meteo_data.get("pm10"),
-            "co": waqi_data["co"] if waqi_data["co"] is not None else open_meteo_data.get("carbon_monoxide"),
-            "no2": waqi_data["no2"] if waqi_data["no2"] is not None else open_meteo_data.get("nitrogen_dioxide"),
-            "so2": waqi_data["so2"] if waqi_data["so2"] is not None else open_meteo_data.get("sulphur_dioxide"),
-            "o3": waqi_data["o3"] if waqi_data["o3"] is not None else open_meteo_data.get("ozone"),
+            "pm2_5": open_meteo_data.get("pm2_5"),
+            "pm10": open_meteo_data.get("pm10"),
+            "co": open_meteo_data.get("carbon_monoxide"),
+            "no2": open_meteo_data.get("nitrogen_dioxide"),
+            "so2": open_meteo_data.get("sulphur_dioxide"),
+            "o3": open_meteo_data.get("ozone"),
             "us_aqi": waqi_data["us_aqi"] if waqi_data["us_aqi"] is not None else open_meteo_data.get("us_aqi"),
             "european_aqi": open_meteo_data.get("european_aqi"),
             "station_name": waqi_data.get("station_name"),
