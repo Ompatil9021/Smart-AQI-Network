@@ -6,14 +6,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 
-from aqi_calc import aqi_category, aqi_color, compute_cpcb_aqi
+from aqi_calc import aqi_category, aqi_color, clamp_aqi, compute_cpcb_aqi
 from config import AQI_CACHE_TTL_SECONDS, MEMORY_CACHE_TTL_SECONDS, TRACKED_CITIES
 from db import cache_get, cache_put, parse_payload
 from ml_models import predict_forecast
 from providers import (
     city_key,
     fetch_air_quality,
-    fetch_openmeteo_forecast,
     fetch_weather,
     geocode_city,
     get_cached_polygon,
@@ -52,6 +51,33 @@ def _round_pollutant(value):
         return None
 
 
+_MAX_FORECAST_DELTA = {"6h": 30, "24h": 45, "48h": 60}
+
+
+def _forecast_for_display(pollutants: dict, weather: dict, displayed_aqi: int) -> dict:
+    """Predict CAMS-consistent AQI change, then apply it to the number shown on screen.
+
+    Training used CPCB(AQI) computed from the same pollutant row. Live current AQI is
+    often a WAQI/CPCB station value (~124) while pollutants still come from Open-Meteo
+    CAMS (~30–70). Plotting raw CAMS/ML absolute values next to the station reading
+    produces the fake 124 → 32 cliff.
+    """
+    implied_now = compute_cpcb_aqi(pollutants)
+    model_now = implied_now if implied_now > 0 else displayed_aqi
+    raw = predict_forecast(pollutants, weather or {}, model_now)
+    out = {}
+    for horizon in ("6h", "24h", "48h"):
+        pred = raw.get(horizon)
+        if pred is None:
+            out[horizon] = displayed_aqi
+            continue
+        delta = int(pred) - int(model_now)
+        cap = _MAX_FORECAST_DELTA[horizon]
+        delta = max(-cap, min(cap, delta))
+        out[horizon] = clamp_aqi(displayed_aqi + delta)
+    return out
+
+
 def _assemble(city_name: str, lat: float, lon: float, pollutants: dict, weather: dict, source: str, stale: bool = False) -> dict:
     clean_pollutants = {
         "pm2_5": _round_pollutant(pollutants.get("pm2_5")),
@@ -68,11 +94,7 @@ def _assemble(city_name: str, lat: float, lon: float, pollutants: dict, weather:
         if current_aqi == 0 and pollutants.get("us_aqi"):
             current_aqi = int(round(float(pollutants["us_aqi"])))
 
-    # Primary: retrained XGBoost models (CPCB AQI, same scale as current_aqi).
-    # Fallback: Open-Meteo CAMS converted to CPCB if a model file failed to load.
-    forecast = predict_forecast(clean_pollutants, weather or {}, current_aqi)
-    if not any(v is not None for v in forecast.values()):
-        forecast = fetch_openmeteo_forecast(lat, lon)
+    forecast = _forecast_for_display(clean_pollutants, weather or {}, current_aqi)
 
     geojson = get_cached_polygon(city_name, lat, lon)
     schedule_polygon_refresh(city_name, lat, lon)

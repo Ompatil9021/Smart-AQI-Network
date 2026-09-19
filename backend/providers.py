@@ -176,6 +176,15 @@ def search_cities(query: str, limit: int = 6) -> list[dict]:
         return []
 
 
+def _is_concentration(value: Optional[float], station_aqi: Optional[int]) -> bool:
+    """WAQI iaqi values are often US AQI sub-indexes, not µg/m³."""
+    if value is None:
+        return False
+    if station_aqi is not None and abs(float(value) - float(station_aqi)) < 8:
+        return False
+    return True
+
+
 def fetch_waqi_ground_aqi(lat: float, lon: float, city_name: str = "") -> Optional[dict]:
     """Fetch real-time CPCB ground station air quality from WAQI API."""
     if not WAQI_TOKEN:
@@ -222,15 +231,16 @@ def fetch_waqi_ground_aqi(lat: float, lon: float, city_name: str = "") -> Option
             so2 = get_v("so2")
             o3 = get_v("o3")
             station_name = (station_data.get("city") or {}).get("name") or city_name
+            station_aqi = int(aqi_val)
 
             return {
-                "pm2_5": pm2_5,
-                "pm10": pm10,
+                "pm2_5": pm2_5 if _is_concentration(pm2_5, station_aqi) else None,
+                "pm10": pm10 if _is_concentration(pm10, station_aqi) else None,
                 "co": co,
-                "no2": no2,
-                "so2": so2,
-                "o3": o3,
-                "us_aqi": int(aqi_val),
+                "no2": no2 if _is_concentration(no2, station_aqi) else None,
+                "so2": so2 if _is_concentration(so2, station_aqi) else None,
+                "o3": o3 if _is_concentration(o3, station_aqi) else None,
+                "us_aqi": station_aqi,
                 "european_aqi": None,
                 "station_name": station_name,
                 "observed_at": (station_data.get("time") or {}).get("s"),
@@ -279,12 +289,12 @@ def fetch_air_quality(lat: float, lon: float, city_name: str = "") -> dict:
 
     if waqi_data:
         return {
-            "pm2_5": open_meteo_data.get("pm2_5"),
-            "pm10": open_meteo_data.get("pm10"),
-            "co": open_meteo_data.get("carbon_monoxide"),
-            "no2": open_meteo_data.get("nitrogen_dioxide"),
-            "so2": open_meteo_data.get("sulphur_dioxide"),
-            "o3": open_meteo_data.get("ozone"),
+            "pm2_5": waqi_data.get("pm2_5") if waqi_data.get("pm2_5") is not None else open_meteo_data.get("pm2_5"),
+            "pm10": waqi_data.get("pm10") if waqi_data.get("pm10") is not None else open_meteo_data.get("pm10"),
+            "co": waqi_data.get("co") if waqi_data.get("co") is not None else open_meteo_data.get("carbon_monoxide"),
+            "no2": waqi_data.get("no2") if waqi_data.get("no2") is not None else open_meteo_data.get("nitrogen_dioxide"),
+            "so2": waqi_data.get("so2") if waqi_data.get("so2") is not None else open_meteo_data.get("sulphur_dioxide"),
+            "o3": waqi_data.get("o3") if waqi_data.get("o3") is not None else open_meteo_data.get("ozone"),
             "us_aqi": waqi_data["us_aqi"] if waqi_data["us_aqi"] is not None else open_meteo_data.get("us_aqi"),
             "european_aqi": open_meteo_data.get("european_aqi"),
             "station_name": waqi_data.get("station_name"),
