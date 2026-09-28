@@ -1,96 +1,47 @@
 import logging
 import os
-from datetime import datetime
-from typing import Optional
 
-import pandas as pd
-import xgboost as xgb
+import joblib
 
 from aqi_calc import clamp_aqi
-from config import MODEL_PATHS
+from features import build_features
+from history import fetch_history
+
+try:
+    import ml_models_xgb          # old snapshot model, used only as fallback
+except Exception:
+    ml_models_xgb = None
 
 logger = logging.getLogger(__name__)
-
-# These 12 features MUST match exactly what the XGBoost models were trained on.
-FEATURE_COLUMNS = [
-    "pm2_5_ugm3",
-    "pm10_ugm3",
-    "co_ugm3",
-    "no2_ugm3",
-    "so2_ugm3",
-    "o3_ugm3",
-    "humidity_percent",
-    "dew_point_c",
-    "wind_gusts_kmh",
-    "pressure_msl_hpa",
-    "cloud_cover_percent",
-    "month",
-]
-
-_models: dict[str, Optional[xgb.Booster]] = {"6h": None, "24h": None, "48h": None}
+MODEL_PATH = os.getenv(
+    "AQI_MODEL_PATH",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "models", "aqi_models.joblib"),
+)
+_bundle = None
 
 
 def load_models() -> None:
-    loaded = []
-    for horizon, path in MODEL_PATHS.items():
-        try:
-            if not os.path.isfile(path):
-                raise FileNotFoundError(path)
-            model = xgb.Booster()
-            model.load_model(path)
-            _models[horizon] = model
-            loaded.append(f"{horizon} ({os.path.getsize(path)} bytes)")
-            logger.info("Loaded XGBoost %s from %s", horizon, path)
-        except Exception as err:
-            _models[horizon] = None
-            logger.error("Failed to load model %s from %s: %s", horizon, path, err)
-    if loaded:
-        logger.info("XGBoost forecast models ready: %s", ", ".join(loaded))
-
-
-def _num(value, default: float) -> float:
+    global _bundle
     try:
-        if value is None:
-            return default
-        return float(value)
-    except (TypeError, ValueError):
-        return default
+        _bundle = joblib.load(MODEL_PATH)
+        logger.info("Loaded %s models from %s", _bundle.get("algo"), MODEL_PATH)
+    except Exception as err:
+        _bundle = None
+        logger.error("Could not load %s: %s", MODEL_PATH, err)
+    if ml_models_xgb:
+        ml_models_xgb.load_models()
 
 
-def build_features(pollutants: dict, weather: dict) -> pd.DataFrame:
-    month = datetime.now().month
-    row = {
-        "pm2_5_ugm3": _num(pollutants.get("pm2_5"), 50),
-        "pm10_ugm3": _num(pollutants.get("pm10"), 80),
-        "co_ugm3": _num(pollutants.get("co"), 400),
-        "no2_ugm3": _num(pollutants.get("no2"), 25),
-        "so2_ugm3": _num(pollutants.get("so2"), 10),
-        "o3_ugm3": _num(pollutants.get("o3"), 30),
-        "humidity_percent": _num(weather.get("humidity"), 60),
-        "dew_point_c": _num(weather.get("dew_point"), 18),
-        "wind_gusts_kmh": _num(weather.get("wind_gusts"), 12),
-        "pressure_msl_hpa": _num(weather.get("pressure"), 1010),
-        "cloud_cover_percent": _num(weather.get("cloud_cover"), 40),
-        "month": month,
-    }
-    return pd.DataFrame([row], columns=FEATURE_COLUMNS)
-
-
-def predict_forecast(pollutants: dict, weather: dict) -> dict:
-    if _models["6h"] is None or _models["24h"] is None or _models["48h"] is None:
-        load_models()
-    features = build_features(pollutants, weather)
-    dmatrix = xgb.DMatrix(features)
-    out = {}
-    for horizon in ("6h", "24h", "48h"):
-        model = _models.get(horizon)
-        if model is None:
-            out[horizon] = None
-            continue
+def predict_forecast(pollutants: dict, weather: dict, current_aqi: int = 0,
+                     lat=None, lon=None) -> dict:
+    if _bundle is not None and lat is not None and lon is not None:
         try:
-            pred = model.predict(dmatrix)[0]
-            out[horizon] = clamp_aqi(float(pred))
+            hist = fetch_history(float(lat), float(lon)).asfreq("h").ffill().bfill()
+            X = build_features(hist).iloc[[-1]][_bundle["features"]].fillna(0)
+            return {f"{h}h": clamp_aqi(float(m.predict(X)[0]))
+                    for h, m in _bundle["models"].items()}
         except Exception as err:
-            logger.error("Prediction error for horizon %s: %s", horizon, err)
-            out[horizon] = None
-    return out
+            logger.error("New model failed, using fallback: %s", err)
+    if ml_models_xgb:
+        return ml_models_xgb.predict_forecast(pollutants, weather)
+    return {"6h": None, "24h": None, "48h": None}

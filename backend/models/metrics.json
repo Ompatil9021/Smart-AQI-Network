@@ -1,0 +1,1 @@
+[{"horizon_h":6,"MAE":15.539,"RMSE":26.077,"R2":0.842,"Persistence_MAE":36.606,"Persistence_R2":0.354},{"horizon_h":24,"MAE":18.44,"RMSE":31.338,"R2":0.772,"Persistence_MAE":20.003,"Persistence_R2":0.702},{"horizon_h":48,"MAE":21.492,"RMSE":34.943,"R2":0.714,"Persistence_MAE":24.458,"Persistence_R2":0.589}]

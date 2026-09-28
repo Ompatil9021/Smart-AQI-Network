@@ -218,6 +218,12 @@ def fetch_waqi_ground_aqi(lat: float, lon: float, city_name: str = "") -> Option
                 continue
 
             station_data = data["data"]
+            time_info = station_data.get("time") or {}
+            obs_epoch = time_info.get("v")
+            if obs_epoch and abs(time.time() - float(obs_epoch)) > 86400:
+                logger.info("Skipping stale WAQI station %s (last updated epoch %s)", url, obs_epoch)
+                continue
+
             aqi_val = station_data.get("aqi")
             if aqi_val is None or aqi_val == "-" or not isinstance(aqi_val, (int, float)):
                 continue
@@ -308,16 +314,16 @@ def fetch_air_quality(lat: float, lon: float, city_name: str = "") -> dict:
 
     if waqi_data:
         return {
-            "pm2_5": waqi_data.get("pm2_5") if waqi_data.get("pm2_5") is not None else open_meteo_data.get("pm2_5"),
-            "pm10": waqi_data.get("pm10") if waqi_data.get("pm10") is not None else open_meteo_data.get("pm10"),
-            "co": waqi_data.get("co") if waqi_data.get("co") is not None else open_meteo_data.get("carbon_monoxide"),
-            "no2": waqi_data.get("no2") if waqi_data.get("no2") is not None else open_meteo_data.get("nitrogen_dioxide"),
-            "so2": waqi_data.get("so2") if waqi_data.get("so2") is not None else open_meteo_data.get("sulphur_dioxide"),
-            "o3": waqi_data.get("o3") if waqi_data.get("o3") is not None else open_meteo_data.get("ozone"),
-            "us_aqi": waqi_data["us_aqi"] if waqi_data["us_aqi"] is not None else open_meteo_data.get("us_aqi"),
+            "pm2_5": open_meteo_data.get("pm2_5") if open_meteo_data.get("pm2_5") is not None else waqi_data.get("pm2_5"),
+            "pm10": open_meteo_data.get("pm10") if open_meteo_data.get("pm10") is not None else waqi_data.get("pm10"),
+            "co": open_meteo_data.get("carbon_monoxide") if open_meteo_data.get("carbon_monoxide") is not None else waqi_data.get("co"),
+            "no2": open_meteo_data.get("nitrogen_dioxide") if open_meteo_data.get("nitrogen_dioxide") is not None else waqi_data.get("no2"),
+            "so2": open_meteo_data.get("sulphur_dioxide") if open_meteo_data.get("sulphur_dioxide") is not None else waqi_data.get("so2"),
+            "o3": open_meteo_data.get("ozone") if open_meteo_data.get("ozone") is not None else waqi_data.get("o3"),
+            "us_aqi": waqi_data.get("us_aqi") or open_meteo_data.get("us_aqi"),
             "european_aqi": open_meteo_data.get("european_aqi"),
             "station_name": waqi_data.get("station_name"),
-            "observed_at": waqi_data["observed_at"] or open_meteo_data.get("observed_at"),
+            "observed_at": waqi_data.get("observed_at") or open_meteo_data.get("observed_at"),
             "source": "waqi-cpcb",
         }
 

@@ -55,9 +55,9 @@ _MAX_FORECAST_DELTA = {"6h": 30, "24h": 45, "48h": 60}
 
 
 
-def _forecast_for_display(pollutants: dict, weather: dict, displayed_aqi: int) -> dict:
-    """Run XGBoost prediction. Falls back to displayed_aqi per horizon on failure."""
-    raw = predict_forecast(pollutants, weather or {})
+def _forecast_for_display(pollutants: dict, weather: dict, displayed_aqi: int, lat: float = None, lon: float = None) -> dict:
+    """Run prediction with 72h history model. Falls back to snapshot model or displayed_aqi."""
+    raw = predict_forecast(pollutants, weather or {}, current_aqi=displayed_aqi, lat=lat, lon=lon)
     out = {}
     for horizon in ("6h", "24h", "48h"):
         pred = raw.get(horizon)
@@ -74,14 +74,15 @@ def _assemble(city_name: str, lat: float, lon: float, pollutants: dict, weather:
         "no2": _round_pollutant(pollutants.get("no2")),
         "o3": _round_pollutant(pollutants.get("o3")),
     }
-    if source == "waqi-cpcb" and pollutants.get("us_aqi") is not None:
+    cpcb = compute_cpcb_aqi(clean_pollutants)
+    if cpcb > 0:
+        current_aqi = cpcb
+    elif pollutants.get("us_aqi"):
         current_aqi = int(round(float(pollutants["us_aqi"])))
     else:
-        current_aqi = compute_cpcb_aqi(clean_pollutants)
-        if current_aqi == 0 and pollutants.get("us_aqi"):
-            current_aqi = int(round(float(pollutants["us_aqi"])))
+        current_aqi = 0
 
-    forecast = _forecast_for_display(clean_pollutants, weather or {}, current_aqi)
+    forecast = _forecast_for_display(clean_pollutants, weather or {}, current_aqi, lat=lat, lon=lon)
 
     geojson = get_cached_polygon(city_name, lat, lon)
     schedule_polygon_refresh(city_name, lat, lon)
