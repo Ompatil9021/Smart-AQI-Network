@@ -17,6 +17,7 @@ from config import (
     OPEN_METEO_GEOCODE,
     OPEN_METEO_WEATHER,
     REQUEST_TIMEOUT,
+    TRACKED_CITIES,
     USER_AGENT,
     WAQI_FEED_URL,
     WAQI_TOKEN,
@@ -87,6 +88,17 @@ def _extract_current(payload: dict, keys: list[str]) -> dict:
 def geocode_city(query: str) -> Optional[dict]:
     name = normalize_city_name(query)
     key = city_key(name)
+
+    # Fast path: instant resolution for tracked cities (avoids API 429)
+    for tc in TRACKED_CITIES:
+        if city_key(tc["name"]) == key:
+            return {
+                "name": tc["name"],
+                "lat": tc["lat"],
+                "lon": tc["lon"],
+                "geojson": get_cached_polygon(tc["name"], tc["lat"], tc["lon"]),
+            }
+
     cached = cache_get("geo_cache", key)
     if cached and cached.get("lat") is not None:
         geojson = None
@@ -258,32 +270,39 @@ def fetch_air_quality(lat: float, lon: float, city_name: str = "") -> dict:
 
     open_meteo_data = {}
     try:
-        res = _session.get(
-            OPEN_METEO_AIR,
-            params={
-                "latitude": lat,
-                "longitude": lon,
-                "current": "pm10,pm2_5,carbon_monoxide,nitrogen_dioxide,sulphur_dioxide,ozone,us_aqi,european_aqi",
-                "timezone": "auto",
-            },
-            timeout=REQUEST_TIMEOUT,
-        )
-        if res.status_code == 200:
-            data = res.json()
-            open_meteo_data = _extract_current(
-                data,
-                [
-                    "pm10",
-                    "pm2_5",
-                    "carbon_monoxide",
-                    "nitrogen_dioxide",
-                    "sulphur_dioxide",
-                    "ozone",
-                    "us_aqi",
-                    "european_aqi",
-                ],
+        for attempt in range(4):
+            res = _session.get(
+                OPEN_METEO_AIR,
+                params={
+                    "latitude": lat,
+                    "longitude": lon,
+                    "current": "pm10,pm2_5,carbon_monoxide,nitrogen_dioxide,sulphur_dioxide,ozone,us_aqi,european_aqi",
+                    "timezone": "auto",
+                },
+                timeout=REQUEST_TIMEOUT,
             )
-            open_meteo_data["observed_at"] = (data.get("current") or {}).get("time")
+            if res.status_code == 429:
+                wait = 2 ** attempt
+                logger.warning("Air quality 429 rate-limited, retrying in %ds", wait)
+                time.sleep(wait)
+                continue
+            if res.status_code == 200:
+                data = res.json()
+                open_meteo_data = _extract_current(
+                    data,
+                    [
+                        "pm10",
+                        "pm2_5",
+                        "carbon_monoxide",
+                        "nitrogen_dioxide",
+                        "sulphur_dioxide",
+                        "ozone",
+                        "us_aqi",
+                        "european_aqi",
+                    ],
+                )
+                open_meteo_data["observed_at"] = (data.get("current") or {}).get("time")
+            break
     except Exception as exc:
         logger.warning("Open-Meteo air fetch failed: %s", exc)
 
@@ -318,37 +337,49 @@ def fetch_air_quality(lat: float, lon: float, city_name: str = "") -> dict:
 
 
 def fetch_weather(lat: float, lon: float) -> dict:
-    res = _session.get(
-        OPEN_METEO_WEATHER,
-        params={
-            "latitude": lat,
-            "longitude": lon,
-            "current": "relative_humidity_2m,dew_point_2m,wind_gusts_10m,pressure_msl,cloud_cover,temperature_2m",
-            "timezone": "auto",
-        },
-        timeout=REQUEST_TIMEOUT,
-    )
-    res.raise_for_status()
-    data = res.json()
-    current = _extract_current(
-        data,
-        [
-            "relative_humidity_2m",
-            "dew_point_2m",
-            "wind_gusts_10m",
-            "pressure_msl",
-            "cloud_cover",
-            "temperature_2m",
-        ],
-    )
-    return {
-        "humidity": current.get("relative_humidity_2m"),
-        "dew_point": current.get("dew_point_2m"),
-        "wind_gusts": current.get("wind_gusts_10m"),
-        "pressure": current.get("pressure_msl"),
-        "cloud_cover": current.get("cloud_cover"),
-        "temperature": current.get("temperature_2m"),
-    }
+    try:
+        for attempt in range(3):
+            res = _session.get(
+                OPEN_METEO_WEATHER,
+                params={
+                    "latitude": lat,
+                    "longitude": lon,
+                    "current": "relative_humidity_2m,dew_point_2m,wind_gusts_10m,pressure_msl,cloud_cover,temperature_2m",
+                    "timezone": "auto",
+                },
+                timeout=REQUEST_TIMEOUT,
+            )
+            if res.status_code == 429:
+                wait = 1 + attempt
+                logger.warning("Weather 429 rate-limited, retrying in %ds", wait)
+                time.sleep(wait)
+                continue
+            if res.status_code == 200:
+                data = res.json()
+                current = _extract_current(
+                    data,
+                    [
+                        "relative_humidity_2m",
+                        "dew_point_2m",
+                        "wind_gusts_10m",
+                        "pressure_msl",
+                        "cloud_cover",
+                        "temperature_2m",
+                    ],
+                )
+                return {
+                    "humidity": current.get("relative_humidity_2m"),
+                    "dew_point": current.get("dew_point_2m"),
+                    "wind_gusts": current.get("wind_gusts_10m"),
+                    "pressure": current.get("pressure_msl"),
+                    "cloud_cover": current.get("cloud_cover"),
+                    "temperature": current.get("temperature_2m"),
+                }
+            break
+    except Exception as exc:
+        logger.warning("Weather fetch failed: %s", exc)
+    return {}
+
 
 
 def _generate_smooth_contour(lat: float, lon: float, radius_km: float = 12.0) -> dict:

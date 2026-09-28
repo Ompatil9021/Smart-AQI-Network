@@ -135,12 +135,22 @@ def get_city_data(city_name: str, use_cache: bool = True) -> dict | None:
         return parse_payload(stale_row)
 
     try:
+        pollutants = {}
+        weather = {}
         with ThreadPoolExecutor(max_workers=2) as pool:
             air_f = pool.submit(fetch_air_quality, geo["lat"], geo["lon"], geo["name"])
             wx_f = pool.submit(fetch_weather, geo["lat"], geo["lon"])
-            pollutants = air_f.result()
-            weather = wx_f.result()
-        payload = _assemble(geo["name"], geo["lat"], geo["lon"], pollutants, weather, pollutants.get("source", "open-meteo"))
+            try:
+                pollutants = air_f.result() or {}
+            except Exception as e:
+                logger.warning("Air fetch error for %s: %s", name, e)
+            try:
+                weather = wx_f.result() or {}
+            except Exception as e:
+                logger.warning("Weather fetch error for %s: %s", name, e)
+
+        source = pollutants.get("source", "open-meteo") if pollutants else "open-meteo"
+        payload = _assemble(geo["name"], geo["lat"], geo["lon"], pollutants, weather, source)
 
         cache_put(
             "aqi_cache",
@@ -154,7 +164,7 @@ def get_city_data(city_name: str, use_cache: bool = True) -> dict | None:
         )
         _memory_set(key, payload)
         return payload
-    except requests.RequestException as exc:
+    except Exception as exc:
         logger.warning("Live fetch failed for %s: %s", name, exc)
         stale_row = cache_get("aqi_cache", key)
         stale = parse_payload(stale_row)
@@ -245,11 +255,14 @@ def warmup_tracked_cities() -> None:
         except Exception as exc:
             logger.warning("Warmup failed for %s: %s", name, exc)
 
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        futures = [pool.submit(_load, city["name"]) for city in TRACKED_CITIES]
-        for future in as_completed(futures):
-            future.result()
+    # Warm up top major metro cities first with a gentle pause between calls
+    priority_cities = ["Delhi", "Mumbai", "Bengaluru", "Kolkata", "Chennai", "Hyderabad", "Pune"]
+    for name in priority_cities:
+        _load(name)
+        time.sleep(1.5)  # gentle 1.5s delay prevents burst 429 errors on boot
     logger.info("Tracked city cache warmup complete")
+
+
 
 
 def start_warmup() -> None:
