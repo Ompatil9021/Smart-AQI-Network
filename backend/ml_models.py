@@ -34,14 +34,24 @@ def load_models() -> None:
 
 def predict_forecast(pollutants: dict, weather: dict, current_aqi: int = 0,
                      lat=None, lon=None) -> dict:
+    # ── Primary path: 72-hour history + joblib XGB bundle ──────────────────
     if _bundle is not None and lat is not None and lon is not None:
         try:
             hist = fetch_history(float(lat), float(lon)).asfreq("h").ffill().bfill()
             X = build_features(hist).iloc[[-1]][_bundle["features"]].fillna(0)
-            return {f"{h}h": clamp_aqi(float(m.predict(X)[0]))
-                    for h, m in _bundle["models"].items()}
+            result = {f"{h}h": clamp_aqi(float(m.predict(X)[0]))
+                      for h, m in _bundle["models"].items()}
+            logger.info("History-based forecast for (%.2f, %.2f): %s", lat, lon, result)
+            return result
         except Exception as err:
-            logger.error("New model failed, using fallback: %s", err)
+            logger.warning("History model failed, using snapshot fallback: %s", err)
+
+    # ── Secondary path: 12-feature snapshot XGB models ─────────────────────
     if ml_models_xgb:
-        return ml_models_xgb.predict_forecast(pollutants, weather)
-    return {"6h": None, "24h": None, "48h": None}
+        result = ml_models_xgb.predict_forecast(pollutants, weather)
+        logger.info("Snapshot forecast: %s", result)
+        return result
+
+    # ── Last resort: flat forecast anchored on current AQI ─────────────────
+    logger.warning("All models unavailable, returning flat forecast")
+    return {"6h": current_aqi, "24h": current_aqi, "48h": current_aqi}
