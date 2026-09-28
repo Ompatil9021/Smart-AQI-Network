@@ -35,6 +35,31 @@ def health():
     return jsonify({"ok": True, "service": "smart-aqi-network"})
 
 
+@app.get("/api/debug-forecast")
+def debug_forecast():
+    import ml_models
+    import traceback
+    result = {}
+    result["bundle_loaded"] = ml_models._bundle is not None
+    if ml_models._bundle is not None:
+        result["bundle_algo"] = ml_models._bundle.get("algo")
+        result["bundle_features_count"] = len(ml_models._bundle.get("features", []))
+    try:
+        from history import fetch_history
+        h = fetch_history(28.6139, 77.209)
+        result["history_rows"] = len(h)
+        result["history_last_time"] = str(h.index[-1]) if len(h) else None
+    except Exception as e:
+        result["history_error"] = str(e)
+    try:
+        pred = ml_models.predict_forecast({}, {}, current_aqi=68, lat=28.6139, lon=77.209)
+        result["predict_forecast_result"] = pred
+    except Exception as e:
+        result["predict_forecast_error"] = str(e) + "\n" + traceback.format_exc()
+    return jsonify(result)
+
+
+
 @app.get("/api/search")
 def search():
     query = (request.args.get("q") or "").strip()
