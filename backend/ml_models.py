@@ -6,11 +6,12 @@ from typing import Optional
 import pandas as pd
 import xgboost as xgb
 
-from aqi_calc import clamp_aqi, compute_cpcb_aqi
+from aqi_calc import clamp_aqi
 from config import MODEL_PATHS
 
 logger = logging.getLogger(__name__)
 
+# These 12 features MUST match exactly what the XGBoost models were trained on.
 FEATURE_COLUMNS = [
     "pm2_5_ugm3",
     "pm10_ugm3",
@@ -18,10 +19,11 @@ FEATURE_COLUMNS = [
     "no2_ugm3",
     "so2_ugm3",
     "o3_ugm3",
-    "current_aqi",       # NEW: current measured AQI (anchors prediction)
-    "hour",              # NEW: hour of day 0-23
-    "day_of_week",       # NEW: 0=Mon ... 6=Sun
-    "is_weekend",        # NEW: 0 or 1
+    "humidity_percent",
+    "dew_point_c",
+    "wind_gusts_kmh",
+    "pressure_msl_hpa",
+    "cloud_cover_percent",
     "month",
 ]
 
@@ -55,11 +57,8 @@ def _num(value, default: float) -> float:
         return default
 
 
-def build_features(pollutants: dict, weather: dict, current_aqi: int = 0) -> pd.DataFrame:
-    now = datetime.now()
-    aqi_value = _num(current_aqi, 0)
-    if aqi_value <= 0:
-        aqi_value = float(compute_cpcb_aqi(pollutants) or 100)
+def build_features(pollutants: dict, weather: dict) -> pd.DataFrame:
+    month = datetime.now().month
     row = {
         "pm2_5_ugm3": _num(pollutants.get("pm2_5"), 50),
         "pm10_ugm3": _num(pollutants.get("pm10"), 80),
@@ -67,22 +66,21 @@ def build_features(pollutants: dict, weather: dict, current_aqi: int = 0) -> pd.
         "no2_ugm3": _num(pollutants.get("no2"), 25),
         "so2_ugm3": _num(pollutants.get("so2"), 10),
         "o3_ugm3": _num(pollutants.get("o3"), 30),
-        "current_aqi": aqi_value,
-        "hour": now.hour,
-        "day_of_week": now.weekday(),   # 0=Monday, 6=Sunday
-        "is_weekend": 1 if now.weekday() >= 5 else 0,
-        "month": now.month,
+        "humidity_percent": _num(weather.get("humidity"), 60),
+        "dew_point_c": _num(weather.get("dew_point"), 18),
+        "wind_gusts_kmh": _num(weather.get("wind_gusts"), 12),
+        "pressure_msl_hpa": _num(weather.get("pressure"), 1010),
+        "cloud_cover_percent": _num(weather.get("cloud_cover"), 40),
+        "month": month,
     }
     return pd.DataFrame([row], columns=FEATURE_COLUMNS)
 
 
-
-
-def predict_forecast(pollutants: dict, weather: dict, current_aqi: int = 0) -> dict:
+def predict_forecast(pollutants: dict, weather: dict) -> dict:
     if _models["6h"] is None or _models["24h"] is None or _models["48h"] is None:
         load_models()
-    features = build_features(pollutants, weather, current_aqi)
-    dmatrix = xgb.DMatrix(features[FEATURE_COLUMNS])
+    features = build_features(pollutants, weather)
+    dmatrix = xgb.DMatrix(features)
     out = {}
     for horizon in ("6h", "24h", "48h"):
         model = _models.get(horizon)
@@ -96,5 +94,3 @@ def predict_forecast(pollutants: dict, weather: dict, current_aqi: int = 0) -> d
             logger.error("Prediction error for horizon %s: %s", horizon, err)
             out[horizon] = None
     return out
-
-

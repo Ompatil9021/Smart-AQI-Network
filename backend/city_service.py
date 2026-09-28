@@ -54,27 +54,14 @@ def _round_pollutant(value):
 _MAX_FORECAST_DELTA = {"6h": 30, "24h": 45, "48h": 60}
 
 
-def _forecast_for_display(pollutants: dict, weather: dict, displayed_aqi: int) -> dict:
-    """Predict CAMS-consistent AQI change, then apply it to the number shown on screen.
 
-    Training used CPCB(AQI) computed from the same pollutant row. Live current AQI is
-    often a WAQI/CPCB station value (~124) while pollutants still come from Open-Meteo
-    CAMS (~30–70). Plotting raw CAMS/ML absolute values next to the station reading
-    produces the fake 124 → 32 cliff.
-    """
-    implied_now = compute_cpcb_aqi(pollutants)
-    model_now = implied_now if implied_now > 0 else displayed_aqi
-    raw = predict_forecast(pollutants, weather or {}, model_now)
+def _forecast_for_display(pollutants: dict, weather: dict, displayed_aqi: int) -> dict:
+    """Run XGBoost prediction. Falls back to displayed_aqi per horizon on failure."""
+    raw = predict_forecast(pollutants, weather or {})
     out = {}
     for horizon in ("6h", "24h", "48h"):
         pred = raw.get(horizon)
-        if pred is None:
-            out[horizon] = displayed_aqi
-            continue
-        delta = int(pred) - int(model_now)
-        cap = _MAX_FORECAST_DELTA[horizon]
-        delta = max(-cap, min(cap, delta))
-        out[horizon] = clamp_aqi(displayed_aqi + delta)
+        out[horizon] = clamp_aqi(int(pred)) if pred is not None else displayed_aqi
     return out
 
 
